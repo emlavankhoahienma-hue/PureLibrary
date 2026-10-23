@@ -1,0 +1,147 @@
+name: iOS 17+ CI/CD Build & Verification
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test-suite:
+    name: Run Empirical Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies & Build CoreML Models
+        run: |
+          pip install coremltools numpy
+          python3 scripts/build_purelibrary_models.py
+
+      - name: Execute Numerical Test Suite
+        run: |
+          python3 tests/test_pure_library.py
+
+  build-ios:
+    name: Compile iOS 17+ App (Xcode 16 / macOS 15)
+    needs: test-suite
+    runs-on: macos-15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python for CoreML
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Prepare CoreML Models
+        run: |
+          pip install coremltools numpy
+          python3 scripts/build_purelibrary_models.py
+
+      - name: Select Xcode 16
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.2.app 2>/dev/null || sudo xcode-select -s /Applications/Xcode_16.1.app 2>/dev/null || sudo xcode-select -s /Applications/Xcode_16.0.app 2>/dev/null || sudo xcode-select -s /Applications/Xcode_16.app 2>/dev/null || true
+          sudo xcodebuild -runFirstLaunch 2>/dev/null || true
+          xcodebuild -version
+
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild clean build \
+            -project PureLibrary.xcodeproj \
+            -scheme PureLibrary \
+            -destination "generic/platform=iOS Simulator" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Build for Generic iOS Device (Release arm64)
+        run: |
+          xcodebuild clean build \
+            -project PureLibrary.xcodeproj \
+            -target PureLibrary \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PWD/build_device" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Package Unsigned IPA & Verify Device Compatibility
+        run: |
+          # 1. Locate strictly Release-iphoneos build (exclude all simulator paths)
+          APP_PATH=$(find "$PWD/build_device" ~/Library/Developer/Xcode/DerivedData -name "PureLibrary.app" 2>/dev/null | grep -i "iphoneos" | grep -v -i "simulator" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: Could not find Release-iphoneos build!"
+            exit 1
+          fi
+          echo "Found verified device app at: $APP_PATH"
+          
+          # 2. Compile all 3 CoreML models with Apple's official coremlcompiler into the App bundle
+          for M in PureSemanticEncoder PureAestheticNIMA PureTechnicalIQA; do
+            echo "Compiling ${M}.mlpackage with xcrun coremlcompiler..."
+            xcrun coremlcompiler compile "Models/${M}.mlpackage" "$APP_PATH/"
+          done
+          
+          # 3. Ensure companion files and strictly valid Info.plist for Sideloadly
+          cp Models/ZeroShotPromptBank.json "$APP_PATH/" 2>/dev/null || true
+          
+          plutil -replace CFBundleExecutable -string "PureLibrary" "$APP_PATH/Info.plist"
+          plutil -replace CFBundleIdentifier -string "com.purelibrary.app" "$APP_PATH/Info.plist"
+          plutil -replace CFBundlePackageType -string "APPL" "$APP_PATH/Info.plist"
+          plutil -replace CFBundleSupportedPlatforms -json '["iPhoneOS"]' "$APP_PATH/Info.plist"
+          plutil -replace DTPlatformName -string "iphoneos" "$APP_PATH/Info.plist"
+          plutil -replace LSRequiresIPhoneOS -bool true "$APP_PATH/Info.plist"
+          plutil -replace MinimumOSVersion -string "16.0" "$APP_PATH/Info.plist"
+          plutil -replace UIDeviceFamily -json '[1, 2]' "$APP_PATH/Info.plist"
+          plutil -replace UIRequiredDeviceCapabilities -json '["arm64"]' "$APP_PATH/Info.plist"
+          
+          mkdir -p build/Payload
+          cp -r "$APP_PATH" build/Payload/
+          
+          # 4. Binary Architecture and Platform Verification (Mandated for Sideloadly)
+          echo "=== 1. VERIFYING MACH-O BINARY ARCHITECTURE ==="
+          file build/Payload/PureLibrary.app/PureLibrary
+          otool -l build/Payload/PureLibrary.app/PureLibrary | grep -A 4 LC_BUILD_VERSION
+          
+          echo "=== 2. VERIFYING INFO.PLIST FOR SIDELOADLY ==="
+          plutil -lint build/Payload/PureLibrary.app/Info.plist
+          plutil -p build/Payload/PureLibrary.app/Info.plist
+          
+          echo "=== 3. VERIFYING COMPILED COREML MODELS INSIDE APP BUNDLE ==="
+          ls -lh build/Payload/PureLibrary.app/
+          du -sh build/Payload/PureLibrary.app/*.mlmodelc
+          
+          # 5. Package Unsigned IPA
+          cd build
+          zip -r PureLibrary_unsigned.ipa Payload
+          
+          # 6. Hard Anti-Cheat Size Gate [50 MB - 85 MB]
+          IPA_BYTES=$(stat -f%z PureLibrary_unsigned.ipa)
+          IPA_MB=$((IPA_BYTES / 1048576))
+          echo "Final Compressed IPA Size: ${IPA_MB} MB (${IPA_BYTES} bytes)"
+          
+          if [ "$IPA_BYTES" -lt 52428800 ] || [ "$IPA_BYTES" -gt 90000000 ]; then
+            echo "ERROR: IPA size (${IPA_MB} MB) is outside 50MB - 85MB range!"
+            exit 1
+          fi
+          echo "SUCCESS: Anti-cheat check passed! IPA size is ${IPA_MB} MB."
+
+      - name: Upload Unsigned IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PureLibrary-Unsigned-IPA
+          path: build/PureLibrary_unsigned.ipa
+          retention-days: 14
