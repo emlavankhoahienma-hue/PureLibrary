@@ -1,0 +1,12 @@
+{
+  "fileFormatVersion": "1.0.0",
+  "itemInfoEntries": {
+    "5801C8BA-7972-5BCD-B584-60D9B6B85AE7": {
+      "author": "com.apple.CoreML",
+      "description": "PureAestheticNIMA Specification",
+      "name": "model.mlmodel",
+      "path": "com.apple.CoreML/model.mlmodel"
+    }
+  },
+  "rootModelIdentifier": "5801C8BA-7972-5BCD-B584-60D9B6B85AE7"
+}

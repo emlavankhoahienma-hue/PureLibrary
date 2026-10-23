@@ -1,0 +1,12 @@
+{
+  "fileFormatVersion": "1.0.0",
+  "itemInfoEntries": {
+    "BB84CA3B-8972-5A54-A365-B41FEFEC9735": {
+      "author": "com.apple.CoreML",
+      "description": "PureTechnicalIQA Specification",
+      "name": "model.mlmodel",
+      "path": "com.apple.CoreML/model.mlmodel"
+    }
+  },
+  "rootModelIdentifier": "BB84CA3B-8972-5A54-A365-B41FEFEC9735"
+}

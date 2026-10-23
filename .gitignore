@@ -1,0 +1,13 @@
+.DS_Store
+/.build
+/Packages
+xcuserdata/
+*.xcworkspace
+*.xcuserstate
+*.xcuserdatad
+derivedData/
+build/
+.swiftpm/
+__pycache__/
+*.pyc
+*.mlpackage/Data/com.apple.CoreML/weights/weight.bin
