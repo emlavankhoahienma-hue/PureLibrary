@@ -57,8 +57,10 @@ PureLibrary/
 python tests/test_pure_library.py
 ```
 
-## Author
-Developed and maintained by **ace4youblade**.
-
 ## License
 Distributed under the [MIT License](LICENSE).
+
+## Author
+**Ace4youblade (VanKhoa)**  
+Open-source software developer (born 2012) from Hai Phong, Vietnam.  
+GitHub: [@emlavankhoahienma-hue](https://github.com/emlavankhoahienma-hue)
